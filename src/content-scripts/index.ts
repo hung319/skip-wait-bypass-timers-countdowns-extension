@@ -74,9 +74,11 @@ import { initBstshrtGate } from '../sites/bstshrt';
 import { initLinkunlockerGate } from '../sites/linkunlocker';
 import { initStorylineCoursePlayBrand } from '../sites/storyline-scorm';
 import { init1shortlink } from '../sites/1shortlink';
+import { initUrlDecoder } from '../sites/url-decoder';
 import { initTech8sSafeRedirect } from '../sites/tech8s';
 
 const INITS = [
+  initUrlDecoder,
   init1shortlink,
   initTech8sSafeRedirect,
   initStorylineCoursePlayBrand,
