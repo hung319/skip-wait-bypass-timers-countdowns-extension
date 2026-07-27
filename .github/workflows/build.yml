@@ -29,9 +29,28 @@ jobs:
       - name: Build & Package ZIP
         run: bash scripts/build-zip.sh
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: skip-wait-extension
-          path: build/*.zip
-          compression-level: 0
+      - name: Upload to Dev Release
+        if: github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).version)")
+          gh release upload "dev" build/*.zip --clobber \
+            --title "Dev Build v${VERSION}" \
+            --notes "Auto-built from dev branch (commit ${{ github.sha }})" \
+            --target "${{ github.sha }}" 2>/dev/null \
+          || gh release create "dev" build/*.zip \
+            --title "Dev Build v${VERSION}" \
+            --notes "Auto-built from dev branch (commit ${{ github.sha }})" \
+            --target "${{ github.sha }}"
+
+      - name: Upload to Release (main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).version)")
+          gh release create "v${VERSION}" build/*.zip \
+            --title "v${VERSION}" \
+            --notes "See [CHANGELOG](https://github.com/${{ github.repository }}/commits/main)" \
+            --target "${{ github.sha }}" || true
