@@ -74,11 +74,13 @@ import { initBstshrtGate } from '../sites/bstshrt';
 import { initLinkunlockerGate } from '../sites/linkunlocker';
 import { initStorylineCoursePlayBrand } from '../sites/storyline-scorm';
 import { init1shortlink } from '../sites/1shortlink';
+import { initLzmodsBypass } from '../sites/lzmods';
 import { initUrlDecoder } from '../sites/url-decoder';
 import { initTech8sSafeRedirect } from '../sites/tech8s';
 
 const INITS = [
   initUrlDecoder,
+  initLzmodsBypass,
   init1shortlink,
   initTech8sSafeRedirect,
   initStorylineCoursePlayBrand,
