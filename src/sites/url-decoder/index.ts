@@ -1,7 +1,4 @@
-import { isAllowedHost } from '../../utils/domain-check';
-import { URL_DECODER_HOSTS } from './hosts';
-
-const LINK4M_FULL_RE = /^\/full\/?$/i;
+import { LINK4M_FULL_RE, isLink4mHost } from './hosts';
 
 // ── Shared decoding utilities ──
 
@@ -72,9 +69,9 @@ function decodedUrlFromQueryParam(): string | null {
 // ── Content script init ──
 
 export function initUrlDecoder(): void {
-  if (!isAllowedHost(URL_DECODER_HOSTS)) return;
+  if (!isLink4mHost(location.hostname)) return;
 
-  // ── link4m.co/full/?api=...&url=<base64>&type=... ──
+  // ── link4m.<tld>/full/?api=...&url=<base64>&type=... ──
   if (!LINK4M_FULL_RE.test(location.pathname)) return;
 
   const url = decodedUrlFromQueryParam();

@@ -1,8 +1,9 @@
 import { decodeBase64 } from './index';
+import { LINK4M_HOST_RE } from './hosts';
 
-const LINK4M_FULL_RE = /^https:\/\/link4m\.co\/full\/\?/i;
+const LINK4M_FULL_RE = /^https?:\/\/link4m\.[a-z]{2,6}\/full\/\?/i;
 
-/** Intercept link4m.co/full/ navigations and redirect directly to decoded URL */
+/** Intercept `link4m.<tld>/full/?url=…` navigations and redirect straight to the decoded URL. */
 export function initUrlDecoderBackground(): void {
   chrome.webNavigation.onBeforeNavigate.addListener(
     (details) => {
@@ -10,16 +11,19 @@ export function initUrlDecoderBackground(): void {
       if (!LINK4M_FULL_RE.test(details.url)) return;
 
       try {
-        const u = new URL(details.url);
-        const raw = u.searchParams.get('url')?.trim();
+        const url = new URL(details.url);
+        if (!LINK4M_HOST_RE.test(url.hostname)) return;
+        const raw = url.searchParams.get('url')?.trim();
         if (!raw) return;
         const decoded = decodeBase64(raw);
-        if (!decoded.startsWith('http://') && !decoded.startsWith('https://')) return;
+        if (!/^https?:\/\//i.test(decoded)) return;
 
-        // Redirect directly to the decoded destination
+        // Skip the ad page: the destination is already in the link.
         chrome.tabs.update(details.tabId, { url: decoded });
-      } catch {}
+      } catch {
+        /* malformed URL — leave navigation alone */
+      }
     },
-    { url: [{ hostEquals: 'link4m.co', pathPrefix: '/full/' }] },
+    { url: [{ hostSuffix: 'link4m.co' }, { hostSuffix: 'link4m.net' }, { hostSuffix: 'link4m.com' }] },
   );
 }

@@ -14,8 +14,10 @@ import { initRinkuPageHooksInject } from '../sites/rinku';
 import { initStorylineScormMainWorldInject } from '../sites/storyline-scorm';
 import { initUrlDecoderBackground } from '../sites/url-decoder/background';
 import { initTech8sBackground } from '../sites/tech8s/background';
+import { initLink4mBackground } from '../sites/link4m/background';
 
 initUrlDecoderBackground();
+initLink4mBackground();
 initCoomeetMainWorldInject();
 initTech8sBackground();
 initDocumentVisibilitySpoof();

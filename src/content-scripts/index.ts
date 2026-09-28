@@ -77,9 +77,12 @@ import { init1shortlink } from '../sites/1shortlink';
 import { initLzmodsBypass } from '../sites/lzmods';
 import { initUrlDecoder } from '../sites/url-decoder';
 import { initTech8sSafeRedirect } from '../sites/tech8s';
+import { initLink4mGoPage, initAdvertiserWidgetAutomation } from '../sites/link4m';
 
 const INITS = [
   initUrlDecoder,
+  initLink4mGoPage,
+  initAdvertiserWidgetAutomation,
   initLzmodsBypass,
   init1shortlink,
   initTech8sSafeRedirect,
