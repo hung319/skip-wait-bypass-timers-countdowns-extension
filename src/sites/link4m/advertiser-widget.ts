@@ -14,6 +14,35 @@ import { normalizeCodeKey, saveCachedCode } from './code-store';
 const ELEMENT_WAIT_MS = 30_000;
 const START_POLL_MS = 1000;
 const KEEPALIVE_MS = 250;
+const RELOAD_KEY = 'sw:link4m:reloads';
+const MAX_RELOADS = 2;
+
+/** The widget shows this when the server refused the handshake — reloading won't help. */
+const FAILURE_TEXT_RE = /chưa cập nhật|vui lòng thử lại|không lấy được/i;
+
+function reloadCount(): number {
+  try {
+    return Number(sessionStorage.getItem(RELOAD_KEY) ?? '0') || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function bumpReloads(): void {
+  try {
+    sessionStorage.setItem(RELOAD_KEY, String(reloadCount() + 1));
+  } catch {
+    /* storage blocked */
+  }
+}
+
+function clearReloads(): void {
+  try {
+    sessionStorage.removeItem(RELOAD_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 type WidgetContext = {
   element: HTMLElement;
@@ -104,6 +133,7 @@ async function runWidget(ctx: WidgetContext): Promise<void> {
     if (done) return;
     done = true;
     stopKeepAlive();
+    clearReloads();
     await saveCachedCode(normalizeCodeKey(location.hostname), code);
     // Hand the tab back: the Link4M page picks the code up from storage.
     if (auto) {
@@ -128,10 +158,18 @@ async function runWidget(ctx: WidgetContext): Promise<void> {
     }
 
     // Step 1 finished → the widget wants a fresh page load before step 2.
+    // Bounded: a round the server refuses must not turn into a reload loop.
     const step1Done =
       element.dataset['loaded'] === 'true' && !text.includes('Mã KM') && text.length > 0;
-    if (step1Done && !reloaded && auto) {
+    if (
+      step1Done &&
+      !reloaded &&
+      auto &&
+      reloadCount() < MAX_RELOADS &&
+      !FAILURE_TEXT_RE.test(text)
+    ) {
       reloaded = true;
+      bumpReloads();
       stopKeepAlive();
       window.setTimeout(() => location.reload(), 800);
       return;

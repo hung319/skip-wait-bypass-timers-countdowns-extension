@@ -220,7 +220,103 @@ function waitForWrapper(timeoutMs: number): Promise<void> {
   });
 }
 
+type Resolved = {
+  fields: Fields;
+  advertiserUrl: string | null;
+  instructions: string;
+};
+
+const hasAdvertiseForm = (): boolean =>
+  !!document.querySelector('input[type="hidden"][name="campaign_id"]');
+
+function waitForAdvertiseForm(timeoutMs: number): Promise<boolean> {
+  if (hasAdvertiseForm()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const mo = new MutationObserver(() => {
+      if (hasAdvertiseForm() || Date.now() > deadline) {
+        mo.disconnect();
+        resolve(hasAdvertiseForm());
+      }
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    window.setTimeout(() => {
+      mo.disconnect();
+      resolve(hasAdvertiseForm());
+    }, timeoutMs);
+  });
+}
+
+/**
+ * The page runs `get-advertise` itself on load. Reuse its result instead of
+ * firing a second, identical POST — Link4M counts those.
+ */
+async function resolveCampaign(alias: string, codes: string): Promise<Resolved> {
+  const read = (): Resolved => ({
+    fields: readHiddenFields(),
+    advertiserUrl: advertiserUrlFromPage(),
+    instructions: document.getElementById('advertise-html-wrapper')?.innerHTML ?? '',
+  });
+
+  let resolved = read();
+  if (!resolved.fields['campaign_id'] && (await waitForAdvertiseForm(12_000))) resolved = read();
+
+  if (!resolved.fields['campaign_id']) {
+    const adv = await fetchAdvertise(readApiDomain(), alias, codes);
+    if (adv) {
+      resolved = {
+        fields: { ...adv.form.hidden },
+        advertiserUrl: adv.advertiserUrl,
+        instructions: adv.instructions,
+      };
+    }
+  }
+  if (!resolved.fields['alias']) resolved.fields['alias'] = alias;
+  return resolved;
+}
+
+/** The hidden instructions embed a YouTube player that keeps firing ad/telemetry XHRs. */
+function stopHiddenEmbeds(): void {
+  for (const frame of Array.from(
+    document.querySelectorAll('iframe[src*="youtube.com/embed"], iframe[src*="youtube-nocookie.com/embed"]'),
+  )) {
+    frame.removeAttribute('src');
+    frame.remove();
+  }
+}
+
+function watchUntilSubmitted(state: State): void {
+  let lastSubmit = 0;
+  window.setInterval(() => {
+    if (state.finished) return;
+    if (!captchaToken()) return;
+    const now = Date.now();
+    if (now - lastSubmit < 1500) return;
+    lastSubmit = now;
+    void submit(state);
+  }, 400);
+}
+
 async function start(alias: string, codes: string): Promise<void> {
+  const { fields, advertiserUrl, instructions } = await resolveCampaign(alias, codes);
+  const advertiserHost = extractAdvertiserHost(instructions);
+  const advertiserKey = hostKey(advertiserUrl) ?? hostKey(advertiserHost);
+  const searchKeyword = extractSearchKeyword(instructions);
+
+  const cached = await loadCachedCode(
+    [advertiserKey ?? '', advertiserHost ?? '', alias].filter((k): k is string => !!k),
+  );
+
+  const canAutomate = !!(advertiserUrl || searchKeyword || cached);
+  if (!canAutomate) {
+    // Unknown campaign shape — stay out of the way and just submit for the user.
+    const silent = silentState(alias, fields);
+    if (Object.keys(fields).length) watchUntilSubmitted(silent);
+    return;
+  }
+
+  if (!fields['campaign_id']) return;
+
   const overlay = createFullPageOverlay({
     id: OVERLAY_ID,
     brand: 'Skip Wait',
@@ -228,33 +324,8 @@ async function start(alias: string, codes: string): Promise<void> {
     status: 'Đang chuẩn bị…',
   });
   const panel = buildPanel(overlay.turnstileMount);
+  stopHiddenEmbeds();
 
-  // The page itself calls `get-advertise` on load; only call it ourselves when
-  // its form is missing (site change, blocked request, …).
-  let fields = readHiddenFields();
-  let advertiserUrl = advertiserUrlFromPage();
-  let instructionsText = document.getElementById('advertise-html-wrapper')?.textContent ?? '';
-  if (!fields['campaign_id']) {
-    const adv = await fetchAdvertise(readApiDomain(), alias, codes);
-    if (adv) {
-      advertiserUrl = adv.advertiserUrl ?? advertiserUrl;
-      instructionsText = adv.instructions;
-      for (const name of FIELD_NAMES) {
-        const value = adv.form.hidden[name];
-        if (value) fields[name] = value;
-      }
-    }
-  }
-  if (!fields['alias']) fields['alias'] = alias;
-
-  if (!fields['campaign_id']) {
-    overlay.setError('Không đọc được nhiệm vụ. Hãy tải lại trang Link4M.');
-    panel.setStatus('Lỗi: không đọc được dữ liệu nhiệm vụ.');
-    return;
-  }
-
-  const advertiserKey = hostKey(advertiserUrl) ?? hostKey(extractAdvertiserHost(instructionsText));
-  const searchKeyword = extractSearchKeyword(instructionsText);
   const state: State = {
     alias,
     fields,
@@ -266,21 +337,6 @@ async function start(alias: string, codes: string): Promise<void> {
     quiet: false,
     finished: false,
   };
-
-  const cached = await loadCachedCode(
-    [advertiserKey ?? '', extractAdvertiserHost(instructionsText) ?? '', alias].filter(
-      (k): k is string => !!k,
-    ),
-  );
-
-  // Nothing to open and nothing to search: don't hijack the page, just watch for
-  // the captcha token and submit for the user.
-  if (!cached && !advertiserUrl && !searchKeyword) {
-    state.quiet = true;
-    overlay.remove();
-    watchUntilSubmitted(state);
-    return;
-  }
 
   const containerId = await waitForCaptchaWidget(12_000);
   if (containerId) {
@@ -313,7 +369,7 @@ async function start(alias: string, codes: string): Promise<void> {
     if (
       normalized === advertiserKey ||
       normalized === normalizeCodeKey(alias) ||
-      normalized === normalizeCodeKey(extractAdvertiserHost(instructionsText) ?? '')
+      normalized === normalizeCodeKey(advertiserHost ?? '')
     ) {
       applyCode(state, code);
     }
@@ -322,35 +378,56 @@ async function start(alias: string, codes: string): Promise<void> {
   watchUntilSubmitted(state);
 }
 
+/** Minimal state for campaigns we do not automate: nothing is rendered. */
+function silentState(alias: string, fields: Fields): State {
+  const noop = (): void => {};
+  return {
+    alias,
+    fields,
+    code: null,
+    advertiserUrl: null,
+    advertiserKey: null,
+    quiet: true,
+    finished: false,
+    overlay: {
+      turnstileMount: document.createElement('div'),
+      setStatus: noop,
+      setNote: noop,
+      setError: noop,
+      startCountdown: noop,
+      stopCountdown: noop,
+      hideCountdown: noop,
+      remove: noop,
+    },
+    panel: { anchor: document.createElement('div'), setStatus: noop, setAction: noop },
+  };
+}
+
 /** `https://gamebai38.co.com` appears as plain text in some campaign templates. */
 function extractAdvertiserHost(text: string): string | null {
   const m = text.match(/https?:\/\/[^\s"'<>()]+/);
   return m?.[0] ?? null;
 }
 
-function watchUntilSubmitted(state: State): void {
-  let lastSubmit = 0;
-  window.setInterval(() => {
-    if (state.finished) return;
-    if (!captchaToken()) return;
-    const now = Date.now();
-    if (now - lastSubmit < 1500) return;
-    lastSubmit = now;
-    void submit(state);
-  }, 400);
-}
+let started = false;
 
 export function initLink4mGoPage(): void {
+  if (started) return;
   if (!isLink4mHost(location.hostname)) return;
   if (!LINK4M_ALIAS_RE.test(location.pathname)) return;
 
   const boot = (): void => {
+    if (started) return;
     void waitForWrapper(20_000).then(() => {
+      if (started) return;
       const wrapper = document.getElementById('captcha-html-wrapper');
       const alias = wrapper?.dataset['alias'] ?? '';
       const codes = wrapper?.dataset['code'] ?? '';
       if (!alias || !codes) return;
-      void start(alias, codes).catch(() => {});
+      started = true;
+      void start(alias, codes).catch(() => {
+        started = false;
+      });
     });
   };
 
